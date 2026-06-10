@@ -1,195 +1,204 @@
-# APS Failure Prediction – End-to-End MLOps System
+# Scania APS Failure Prediction
 
-A complete MLOps pipeline for predicting failures in Scania's Air Pressure System (APS), demonstrating the full machine learning lifecycle from development to production deployment.
+*A self-directed MLOps learning project.*
 
----
+This project predicts failures in the **Air Pressure System (APS)** of Scania
+trucks from anonymized sensor readings. The positive class represents failures
+caused by a specific APS component; the negative class represents trucks with
+other, non-APS failures.
 
-## Project Overview
+I built this to practice the full path from a tabular machine-learning notebook
+to a small deployable inference service: preprocessing, imbalanced
+classification, model persistence, API design, tests, Docker, and a local
+Kubernetes deployment.
 
-This system detects early signs of APS component failure using approximately 170 anonymized sensor features. The project showcases a production-style workflow using MLOps tools and best practices.
+## What the project does
 
-### What This Project Demonstrates
+- **Trains an XGBoost classifier** on the Scania APS training set using mean
+  imputation, standard scaling, and class-imbalance weighting.
+- **Evaluates the model** on the held-out Scania APS test set with F1, recall,
+  ROC-AUC, and accuracy.
+- **Packages the trained pipeline** as `model.joblib`, including the exact
+  training feature order required at inference time.
+- **Serves predictions** through a FastAPI service with `/health` and
+  `/predict` endpoints.
+- **Builds and tests the service** through GitHub Actions, pytest, Docker, and
+  Kubernetes manifests for Minikube-style local deployment.
 
-- End-to-end machine learning pipeline implementation
-- 'Production-ready' API development and testing
-- Containerization and orchestration fundamentals
-- MLOps workflow from development to deployment
+## The model
 
----
+The production artifact is a scikit-learn `Pipeline`:
 
-## Architecture
-
-The system consists of the following components:
-
-### Data & Model Development
-- **Preprocessing & Training**: Scikit-Learn + XGBoost
-- **Pipeline Serialization**: Joblib for complete ML pipeline persistence
-
-### API & Testing
-- **Inference API**: FastAPI with `/predict` endpoint
-- **Automated Testing**: Pytest for API validation
-
-### Deployment
-- **Containerization**: Docker for reproducible environments
-- **Orchestration**: Kubernetes Deployment + Service (Minikube)
-
----
-
-## Model Input Format
-
-Predictions are made by submitting a JSON payload with APS feature values:
-```json
-{
-  "features": {
-    "aa_000": 0.5,
-    "ab_000": 1.0,
-    "ac_000": 0.3
-  }
-}
+```text
+SimpleImputer(mean) -> StandardScaler -> XGBClassifier
 ```
 
-> **Note**: The model automatically handles missing features through its preprocessing pipeline.
+The dataset is highly imbalanced, so the XGBoost classifier uses
+`scale_pos_weight = negative_count / positive_count`. The original challenge is
+also cost-sensitive: an unnecessary workshop check is much cheaper than missing
+a truck with an APS-related failure, so recall and F1 are more meaningful than
+accuracy alone.
 
----
+## Results
 
-## Getting Started
+The notebook run saved the trained pipeline and produced the following metrics.
+The held-out test set is the original Scania APS test CSV.
 
-### Prerequisites
+| Metric | Value |
+|--------|------:|
+| 5-fold CV F1 mean | 0.8265 |
+| Test accuracy | 0.9938 |
+| Test F1 | 0.8664 |
+| Test recall | 0.8560 |
+| Test ROC-AUC | 0.9959 |
 
-- Python
-- Docker
-- Minikube (for local Kubernetes deployment)
+The accuracy is high partly because the dataset is dominated by negative
+examples. The more important signal is that the model recovers most positive APS
+failures while keeping strong F1 on the minority class.
 
-### Installation
+## API
 
-1. Clone the repository
+Run the service locally:
+
 ```bash
-   git clone 
-   cd aps-failure-prediction
+uvicorn aps_failure.api:app --reload
 ```
 
-2. Install dependencies
-```bash
-   pip install -r requirements.txt
-```
+Health check:
 
-3. Run the API locally
-```bash
-   uvicorn main:app --reload
-```
-
-4. Test the API
-```bash
-   pytest tests/
-```
-
----
-
-## Docker Deployment
-
-Build and run the container:
-```bash
-docker build -t aps-prediction-api .
-docker run -p 8000:8000 aps-prediction-api
-```
-
----
-
-## Kubernetes Deployment
-
-Deploy to Minikube:
-```bash
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
-```
-
-Access the service:
-```bash
-minikube service aps-prediction-service
-```
-
----
-
-## API Usage
-
-### Health Check
 ```bash
 curl http://localhost:8000/health
 ```
 
-### Make Prediction
+Prediction request:
+
 ```bash
 curl -X POST http://localhost:8000/predict \
   -H "Content-Type: application/json" \
   -d '{
     "features": {
-      "aa_000": 0.5,
+      "aa_000": 0.0,
       "ab_000": 1.0,
-      "ac_000": 0.3
+      "ac_000": 0.5
     }
   }'
 ```
 
----
+The API accepts any subset of APS feature names. Missing training features are
+reintroduced as `NaN` in the original column order and handled by the imputer
+inside the trained pipeline.
 
-## Project Structure
-```
-aps-failure-prediction/
-├── data/
-│   ├── raw/
-│   └── processed/
-├── models/
-│   └── pipeline.joblib
-├── src/
-│   ├── preprocessing.py
-│   ├── train.py
-│   └── predict.py
-├── api/
-│   └── main.py
+## Project structure
+
+```text
+.
+├── notebooks/
+│   └── 01_train_xgboost_pipeline.ipynb
+├── src/aps_failure/
+│   ├── api.py
+│   ├── data.py
+│   ├── evaluate.py
+│   ├── model_io.py
+│   └── train.py
 ├── tests/
 │   └── test_api.py
-├── k8s/
+├── deployment/k8s/
 │   ├── deployment.yaml
 │   └── service.yaml
+├── data/
+│   ├── README.md
+│   └── aps_failure_description.txt
+├── results/
+│   └── metrics.json
+├── model.joblib
 ├── Dockerfile
-├── requirements.txt
+├── pyproject.toml
 └── README.md
 ```
 
----
+## Setup
 
-## Learning Objectives
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e ".[dev]"
+```
 
-This project serves as a practical guide for understanding:
+Download the dataset from the UCI Machine Learning Repository:
+https://archive.ics.uci.edu/ml/datasets/aps%2Bfailure%2Bat%2Bscania%2Btrucks
 
-- How machine learning models transition from development to production
-- MLOps fundamentals and best practices
-- API design for ML inference services
-- Container orchestration with Kubernetes
+Place the CSV files here:
 
----
+```text
+data/aps_failure_training_set.csv
+data/aps_failure_test_set.csv
+```
 
-## Contributing
+The raw CSVs are intentionally git-ignored because they are large source data
+files.
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+## Training recipe
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+Train and save a new model bundle:
 
+```bash
+python -m aps_failure.train \
+  --training-csv data/aps_failure_training_set.csv \
+  --output model.joblib
+```
 
----
+Evaluate it on the held-out test set:
 
-## Acknowledgments
+```bash
+python -m aps_failure.evaluate \
+  --model model.joblib \
+  --test-csv data/aps_failure_test_set.csv \
+  --output results/metrics.json
+```
 
-- Dataset provided by Scania AB
-- Built as a demonstration of MLOps principles and practices
+The notebook in `notebooks/` contains the same workflow in exploratory form.
 
----
+## Tests and CI
 
-## Contact
+Run the API tests:
 
-www.linkedin.com/in/jaffarkamil
+```bash
+pytest -q
+```
 
+The GitHub Actions workflow installs the package, runs pytest, and builds the
+Docker image.
+
+## Docker
+
+```bash
+docker build -t scania-aps-failure-api .
+docker run -p 8000:8000 scania-aps-failure-api
+```
+
+## Kubernetes
+
+For a local Minikube workflow:
+
+```bash
+kubectl apply -f deployment/k8s/deployment.yaml
+kubectl apply -f deployment/k8s/service.yaml
+minikube service scania-aps-failure-api
+```
+
+## What I learned
+
+- How to turn an imbalanced tabular ML problem into a deployable inference API.
+- Why accuracy can be misleading on rare-failure datasets.
+- How to persist a full preprocessing and model pipeline safely enough for
+  consistent inference.
+- How Docker, tests, CI, and Kubernetes manifests fit around a small ML service.
+- Why professional ML repositories need reproducible setup instructions and
+  honest evaluation, not just a trained artifact.
+
+## Dataset
+
+This project uses the **APS Failure at Scania Trucks** dataset from Scania CV AB,
+published through the UCI Machine Learning Repository. The included
+`data/aps_failure_description.txt` file preserves the original dataset
+description and challenge cost metric.
