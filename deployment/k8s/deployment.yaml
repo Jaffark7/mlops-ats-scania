@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scania-aps-failure-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scania-aps-failure-api
+  template:
+    metadata:
+      labels:
+        app: scania-aps-failure-api
+    spec:
+      containers:
+      - name: api
+        image: scania-aps-failure-api:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8000
